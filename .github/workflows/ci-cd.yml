@@ -1,4 +1,4 @@
-name: CI/CD - test, build, push to ECR, deploy to EC2
+name: CI/CD - test, build, push to ECR, deploy to EC2:
 
 on:
   push:
@@ -102,3 +102,5 @@ jobs:
             echo "Deploy of $IMAGE_TAG succeeded"
         env:
           IMAGE_TAG: ${{ needs.build_and_push.outputs.image_tag }}
+
+
