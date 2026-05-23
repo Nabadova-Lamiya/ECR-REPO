@@ -1,0 +1,22 @@
+{
+  "name": "lab50-ec2-deploy",
+  "version": "1.0.0",
+  "description": "Lab 50 — deploy a Dockerized Node.js app to EC2 from GitHub Actions",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "lint": "eslint src/ tests/",
+    "test": "jest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}

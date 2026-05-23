@@ -1,0 +1,104 @@
+name: CI/CD - test, build, push to ECR, deploy to EC2
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: lab50/app
+
+jobs:
+  ci_checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+
+  build_and_push:
+    needs: ci_checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: meta
+        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPO:$SHORT_SHA" -t "$REGISTRY/$ECR_REPO:latest" .
+          docker push --all-tags "$REGISTRY/$ECR_REPO"
+
+  deploy_to_ec2:
+    needs: build_and_push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          envs: ECR_REPO,AWS_REGION,IMAGE_TAG
+          script: |
+            set -euo pipefail
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+
+            # Authenticate Docker to ECR using the instance's IAM role
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | sudo docker login --username AWS --password-stdin "$REGISTRY"
+
+            IMAGE="$REGISTRY/$ECR_REPO:$IMAGE_TAG"
+            echo "Pulling $IMAGE"
+            sudo docker pull "$IMAGE"
+
+            # Replace the running container
+            sudo docker rm -f lab50-app 2>/dev/null || true
+            sudo docker run -d \
+              --name lab50-app \
+              --restart unless-stopped \
+              -p 80:3000 \
+              -e APP_VERSION="$IMAGE_TAG" \
+              -e GIT_SHA="$IMAGE_TAG" \
+              "$IMAGE"
+
+            # Wait for health, roll nothing back automatically but fail loudly
+            sleep 5
+            curl -fsS http://localhost:80/health
+            echo "Deploy of $IMAGE_TAG succeeded"
+        env:
+          IMAGE_TAG: ${{ needs.build_and_push.outputs.image_tag }}
