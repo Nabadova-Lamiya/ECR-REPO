@@ -4,6 +4,9 @@ Lab 50 — extends the Lab 49 pipeline to **deploy the container to an EC2
 instance** after pushing the image to Amazon ECR.
 
 ```
+
+
+
 push to main
    ↓
 ci_checks      → lint + unit tests
